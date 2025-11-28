@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Menu, X, Home, Map, LogIn, User, LogOut, ChevronLeft } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext.jsx'
+import logoNormal from '../assets/parkme-logo.png';
 
 export default function Sidebar() {
   const { session, signOut } = useAuth()
@@ -52,7 +53,7 @@ export default function Sidebar() {
           <div className="p-4 flex items-center justify-between border-b border-white-500">
             {!isCollapsed && (
               <img
-                src="/src/assets/parkme-logo.png"
+                src={logoNormal}
                 alt="ParkMe Logo"
                 className="h-10 w-auto bg-white rounded p-1"
               />
