@@ -3,7 +3,7 @@ import { useParking } from '../contexts/ParkingContext.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import ParkingLotCard from '../components/ParkingLotCard.jsx'
 import { useNavigate } from 'react-router-dom'
-import { MapPin, Zap, ToggleLeft, ToggleRight, Navigation } from 'lucide-react'
+import { Zap, ToggleLeft, ToggleRight, Navigation } from 'lucide-react'
 
 function getGreeting() {
   const hour = new Date().getHours()

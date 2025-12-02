@@ -16,14 +16,32 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => {
-      setSession(sess)
-    })
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
+    // Only initialize if Supabase is properly configured
+    if (!supabaseUrl || supabaseUrl === 'https://demo.supabase.co' || !supabaseAnonKey || supabaseAnonKey === 'public-anon-key') {
       setLoading(false)
-    })
-    return () => listener.subscription.unsubscribe()
+      return
+    }
+
+    try {
+      const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => {
+        setSession(sess)
+      })
+      supabase.auth.getSession().then(({ data }) => {
+        setSession(data.session)
+        setLoading(false)
+      }).catch((error) => {
+        console.warn('Supabase auth error:', error)
+        setLoading(false)
+      })
+      return () => {
+        if (listener?.subscription) {
+          listener.subscription.unsubscribe()
+        }
+      }
+    } catch (error) {
+      console.warn('Supabase initialization error:', error)
+      setLoading(false)
+    }
   }, [])
 
   const value = useMemo(
