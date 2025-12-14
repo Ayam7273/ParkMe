@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useParking } from '../contexts/ParkingContext.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import ParkingLotCard from '../components/ParkingLotCard.jsx'
 import { useNavigate } from 'react-router-dom'
 import { Zap, ToggleLeft, ToggleRight, Navigation } from 'lucide-react'
+import { getLastSearchedLocation, saveUserLocation, getUserLocation } from '../utils/locationUtils.js'
 
 function getGreeting() {
   const hour = new Date().getHours()
@@ -13,10 +14,70 @@ function getGreeting() {
 }
 
 export default function Dashboard() {
-  const { filteredLots, loading, error, evOnly, setEvOnly } = useParking()
+  const { filteredLots, loading, error, evOnly, setEvOnly, setLocationFilter } = useParking()
   const { session } = useAuth()
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
+  const [locationStatus, setLocationStatus] = useState('')
+
+  // Load location filter on mount
+  useEffect(() => {
+    // First, try to get last searched location
+    const lastSearched = getLastSearchedLocation()
+    
+    if (lastSearched && lastSearched.lat && lastSearched.lng) {
+      setLocationFilter({
+        lat: lastSearched.lat,
+        lng: lastSearched.lng,
+        radiusKm: 10
+      })
+      setLocationStatus(`Showing parking near ${lastSearched.address || 'your last search'}`)
+      return
+    }
+    
+    // If no last searched location, try to get saved user location
+    const savedUserLocation = getUserLocation()
+    if (savedUserLocation && savedUserLocation.lat && savedUserLocation.lng) {
+      setLocationFilter({
+        lat: savedUserLocation.lat,
+        lng: savedUserLocation.lng,
+        radiusKm: 10
+      })
+      setLocationStatus('Showing parking near your saved location')
+      return
+    }
+    
+    // If no saved location, get current location
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const location = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          }
+          
+          // Save user location
+          saveUserLocation(location)
+          
+          // Set location filter
+          setLocationFilter({
+            lat: location.lat,
+            lng: location.lng,
+            radiusKm: 10
+          })
+          
+          setLocationStatus('Loading parking near your current location...')
+        },
+        (error) => {
+          console.error('Geolocation error:', error)
+          setLocationStatus('Search for a city to find parking lots')
+          // Don't set location filter if geolocation fails
+        }
+      )
+    } else {
+      setLocationStatus('Search for a city to find parking lots')
+    }
+  }, [setLocationFilter])
 
   const filteredByName = useMemo(() => {
     if (!query.trim()) return filteredLots
@@ -35,8 +96,26 @@ export default function Dashboard() {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const { latitude, longitude } = position.coords
-          // TODO: Filter lots by proximity to user location
-          alert(`Location: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`)
+          const location = { lat: latitude, lng: longitude }
+          
+          // Save user location
+          saveUserLocation(location)
+          
+          // Update location filter
+          setLocationFilter({
+            lat: location.lat,
+            lng: location.lng,
+            radiusKm: 10
+          })
+          
+          setLocationStatus('Showing parking near your current location')
+          
+          // Navigate to map with user location
+          navigate('/map', { 
+            state: { 
+              userLocation: location 
+            } 
+          })
         },
         (error) => {
           alert('Unable to retrieve your location. Please enable location permissions.')
@@ -58,6 +137,12 @@ export default function Dashboard() {
       <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg shadow-lg p-6 text-white">
         <h1 className="text-3xl font-bold">{getGreeting()}, {userName}!</h1>
         <p className="mt-2 text-blue-100">Find the perfect parking spot in real-time</p>
+        {locationStatus && (
+          <p className="mt-2 text-sm text-blue-200 flex items-center gap-2">
+            <Navigation className="w-4 h-4" />
+            {locationStatus}
+          </p>
+        )}
       </div>
 
       {/* Search and filters */}

@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { LoadScript } from '@react-google-maps/api'
 import Sidebar from './components/Sidebar.jsx'
 import Preloader from './components/Preloader.jsx'
 import { lazy, Suspense, useState, useEffect } from 'react'
@@ -12,20 +13,31 @@ import { AuthProvider } from './contexts/AuthContext.jsx'
 import { ParkingProvider } from './contexts/ParkingContext.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 
+const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''
+const libraries = ['places'] // Places API includes geocoding functionality
+
 function AppContent() {
   const [isInitialLoad, setIsInitialLoad] = useState(true)
+  const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false)
 
   useEffect(() => {
-    // Hide preloader after initial load
-    const timer = setTimeout(() => {
-      setIsInitialLoad(false)
-    }, 800)
-    return () => clearTimeout(timer)
+    const checkGoogleMaps = () => {
+      if (window.google && window.google.maps) {
+        setIsGoogleMapsLoaded(true)
+        const timer = setTimeout(() => {
+          setIsInitialLoad(false)
+        }, 500)
+        return () => clearTimeout(timer)
+      } else {
+        setTimeout(checkGoogleMaps, 100)
+      }
+    }
+    checkGoogleMaps()
   }, [])
 
   return (
     <>
-      <Preloader isLoading={isInitialLoad} />
+      <Preloader isLoading={isInitialLoad || !isGoogleMapsLoaded} />
       <div className="min-h-screen flex">
         <Sidebar />
         <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 transition-all duration-300">
@@ -54,10 +66,20 @@ function AppContent() {
 }
 
 export default function App() {
+  if (!googleMapsApiKey) {
+    console.warn('Google Maps API key is not set. Please add VITE_GOOGLE_MAPS_API_KEY to your .env file')
+  }
+
   return (
     <AuthProvider>
       <ParkingProvider>
-        <AppContent />
+        <LoadScript 
+          googleMapsApiKey={googleMapsApiKey}
+          libraries={libraries}
+          loadingElement={<Preloader isLoading={true} />}
+        >
+          <AppContent />
+        </LoadScript>
       </ParkingProvider>
     </AuthProvider>
   )

@@ -1,100 +1,149 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { fetchParkingLotsFromPlaces } from '../utils/placesApi.js'
 
 const ParkingContext = createContext(null)
 
-// Mock API to simulate backend/ML updates
-async function fetchParkingLots() {
-  // In real app, fetch from API route or Supabase function
-  // Here we simulate 8 lots with random availability that changes
-  const baseLots = [
-    { id: 'airport', name: 'Airport Terminal Parking', lat: 24.9005, lng: 67.1683, capacity: 500, evSpots: 30, address: '321 Main Street, Airport Zone' },
-    { id: 'university', name: 'University Campus Lot', lat: 24.8615, lng: 67.0099, capacity: 250, evSpots: 15, address: '123 Campus Drive, Education District' },
-    { id: 'shopping', name: 'Shopping Center Lot', lat: 24.8810, lng: 67.0720, capacity: 300, evSpots: 20, address: '789 Commerce Street, Shopping District' },
-    { id: 'business', name: 'Business Tower Garage', lat: 24.8607, lng: 67.0011, capacity: 120, evSpots: 10, address: '987 Corporate Drive, Business District' },
-    { id: 'tech', name: 'Tech Hub Parking', lat: 24.8972, lng: 67.0302, capacity: 200, evSpots: 12, address: '456 Innovation Way, Tech Park' },
-    { id: 'residential', name: 'Residential North Lot', lat: 24.9252, lng: 67.0324, capacity: 80, evSpots: 6, address: '321 Maple Avenue, North District' },
-    { id: 'central', name: 'Central Plaza Garage', lat: 24.8723, lng: 67.0433, capacity: 150, evSpots: 8, address: '654 Center Street, Downtown' },
-    { id: 'metro', name: 'Metro Station Garage', lat: 24.8543, lng: 67.0280, capacity: 180, evSpots: 14, address: '321 Transit Avenue, Downtown' },
-  ]
-  return baseLots.map((lot) => {
-    const occupied = Math.floor(Math.random() * lot.capacity)
-    const evOccupied = Math.min(Math.floor(Math.random() * lot.evSpots), occupied)
-    return {
-      ...lot,
-      occupied,
-      available: lot.capacity - occupied,
-      evAvailable: Math.max(0, lot.evSpots - evOccupied),
-      pricePerHour: Number((Math.random() * 12 + 2).toFixed(2)),
-    }
-  })
+// Cache for parking lots to avoid excessive API calls
+const parkingCache = new Map()
+const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+
+function getCacheKey(location, radiusKm) {
+  return `${location.lat.toFixed(4)}_${location.lng.toFixed(4)}_${radiusKm}`
+}
+
+function isCacheValid(cacheEntry) {
+  return cacheEntry && (Date.now() - cacheEntry.timestamp) < CACHE_DURATION
+}
+
+/**
+ * Fetch parking lots from Google Places API based on location
+ */
+async function fetchParkingLots(locationFilter) {
+  // If no location filter, return empty array (user needs to search)
+  if (!locationFilter || !locationFilter.lat || !locationFilter.lng) {
+    return []
+  }
+
+  // Check cache first
+  const cacheKey = getCacheKey(
+    { lat: locationFilter.lat, lng: locationFilter.lng },
+    locationFilter.radiusKm || 10
+  )
+  
+  const cached = parkingCache.get(cacheKey)
+  if (isCacheValid(cached)) {
+    return cached.data
+  }
+
+  // Check if Google Maps is loaded
+  if (!window.google || !window.google.maps || !window.google.maps.places) {
+    throw new Error('Google Maps Places API not loaded. Please wait for the map to load.')
+  }
+
+  try {
+    // Convert radius from km to meters
+    const radiusMeters = (locationFilter.radiusKm || 10) * 1000
+    
+    const parkingLots = await fetchParkingLotsFromPlaces(
+      { lat: locationFilter.lat, lng: locationFilter.lng },
+      radiusMeters
+    )
+
+    // Cache the results
+    parkingCache.set(cacheKey, {
+      data: parkingLots,
+      timestamp: Date.now()
+    })
+
+    return parkingLots
+  } catch (error) {
+    console.error('Error fetching parking lots:', error)
+    throw error
+  }
 }
 
 export function ParkingProvider({ children }) {
   const [lots, setLots] = useState([])
   const [query, setQuery] = useState('')
   const [evOnly, setEvOnly] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [locationFilter, setLocationFilter] = useState(null) // { lat, lng, radiusKm }
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const timerRef = useRef(null)
   const inFlightRef = useRef(false)
-  const backoffRef = useRef(5000)
 
-  const load = async () => {
-    if (inFlightRef.current) return
-    inFlightRef.current = true
-    try {
-      setError(null)
-      const data = await fetchParkingLots()
-      // Only update if changed to avoid unnecessary re-renders
-      const changed = JSON.stringify(lots) !== JSON.stringify(data)
-      if (changed) setLots(data)
-      // success: reset backoff
-      backoffRef.current = getBaseInterval()
-    } catch (e) {
-      setError('Failed to load parking data')
-      // exponential backoff on failure (max 60s)
-      backoffRef.current = Math.min(backoffRef.current * 2, 60000)
-    } finally {
-      setLoading(false)
-      inFlightRef.current = false
-      scheduleNext()
-    }
-  }
-
-  const getBaseInterval = () => {
-    const conn = navigator.connection?.effectiveType
-    if (conn === '2g' || conn === 'slow-2g') return 15000
-    if (document.hidden) return 20000
-    return 5000
-  }
-
-  const scheduleNext = () => {
-    clearTimeout(timerRef.current)
-    const delay = backoffRef.current
-    timerRef.current = setTimeout(load, delay)
-  }
-
+  // Fetch parking lots when location filter changes
   useEffect(() => {
-    backoffRef.current = getBaseInterval()
-    load()
-    const onVisibility = () => {
-      backoffRef.current = getBaseInterval()
-      if (!document.hidden) {
-        clearTimeout(timerRef.current)
-        load()
+    const load = async () => {
+      if (inFlightRef.current) return
+      inFlightRef.current = true
+      
+      setLoading(true)
+      setError(null)
+      
+      try {
+        const data = await fetchParkingLots(locationFilter)
+        setLots(data)
+      } catch (e) {
+        console.error('Failed to load parking data:', e)
+        setError(e.message || 'Failed to load parking data. Please ensure Places API is enabled.')
+        setLots([]) // Clear lots on error
+      } finally {
+        setLoading(false)
+        inFlightRef.current = false
       }
     }
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibility)
-      clearTimeout(timerRef.current)
+
+    // Wait a bit for Google Maps to load if locationFilter is set immediately
+    if (locationFilter) {
+      const timer = setTimeout(() => {
+        load()
+      }, 500) // Small delay to ensure Google Maps is loaded
+      
+      return () => clearTimeout(timer)
+    } else {
+      // If no location filter, clear the lots
+      setLots([])
     }
-  }, [])
+  }, [locationFilter])
+
+  // Update availability periodically for existing lots (simulate real-time updates)
+  useEffect(() => {
+    if (lots.length === 0) return
+
+    const updateAvailability = () => {
+      setLots(currentLots => 
+        currentLots.map(lot => {
+          // Small random changes to availability
+          const change = Math.floor(Math.random() * 5) - 2 // -2 to +2
+          const newOccupied = Math.max(0, Math.min(lot.capacity, lot.occupied + change))
+          const newAvailable = lot.capacity - newOccupied
+          
+          // Update EV availability proportionally
+          const evRatio = lot.evSpots / lot.capacity
+          const newEvOccupied = Math.min(lot.evSpots, Math.floor(newOccupied * evRatio))
+          const newEvAvailable = lot.evSpots - newEvOccupied
+          
+          return {
+            ...lot,
+            occupied: newOccupied,
+            available: newAvailable,
+            evOccupied: newEvOccupied,
+            evAvailable: newEvAvailable
+          }
+        })
+      )
+    }
+
+    const interval = setInterval(updateAvailability, 10000) // Update every 10 seconds
+    return () => clearInterval(interval)
+  }, [lots.length])
 
   const filteredLots = useMemo(() => {
+    // Places API already filters by location, so we just apply text and EV filters
     const term = query.trim().toLowerCase()
     return lots.filter((l) => {
-      const matchesQuery = !term || l.name.toLowerCase().includes(term)
+      const matchesQuery = !term || l.name.toLowerCase().includes(term) || l.address.toLowerCase().includes(term)
       const matchesEv = !evOnly || l.evAvailable > 0
       return matchesQuery && matchesEv
     })
@@ -108,11 +157,12 @@ export function ParkingProvider({ children }) {
       setQuery,
       evOnly,
       setEvOnly,
+      locationFilter,
+      setLocationFilter,
       loading,
       error,
-      reload: load,
     }),
-    [lots, filteredLots, query, evOnly, loading, error]
+    [lots, filteredLots, query, evOnly, locationFilter, loading, error]
   )
 
   return <ParkingContext.Provider value={value}>{children}</ParkingContext.Provider>
